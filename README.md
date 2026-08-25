@@ -61,7 +61,8 @@ Usage: graftcp [-hn] [-b value] [--config value] [--disable-dns] [--disable-udp]
                     Set the mode for select a proxy [auto | random |
                     only_http_proxy | only_socks5 | direct] [auto]
      --socks5=value
-                    SOCKS5 address [127.0.0.1:1080]
+                    SOCKS5 address, e.g.: 127.0.0.1:1080 or unix:/path/tor.sock
+                    (default 127.0.0.1:1080 when no proxy is configured)
      --socks5_password=value
                     SOCKS5 password
      --socks5_username=value
@@ -78,6 +79,7 @@ Examples:
 
 ```sh
 ./local/graftcp --socks5 127.0.0.1:1080 curl https://example.com
+./local/graftcp --select_proxy_mode only_socks5 --socks5 unix:/path/tor.sock curl https://example.com
 ./local/graftcp --enable-dns --dns-server 1.1.1.1:53 curl https://example.com
 ./local/graftcp --enable-udp --socks5 127.0.0.1:1080 your-udp-client
 ./local/graftcp --http_proxy 127.0.0.1:8080 git clone https://github.com/hmgle/graftcp.git
@@ -114,7 +116,7 @@ Config keys mirror the CLI flags: `dns_proxy = true` -> `--enable-dns`, `udp_pro
 
 For IPv6 `connect(2)`, `graftcp` rewrites to an IPv4-mapped loopback address (`::ffff:127.x.y.z`) so the same token registry can be reused.
 
-When DNS proxying is enabled, `graftcp` also starts an embedded UDP DNS listener. UDP `connect()` and `sendto()` calls to port 53 are rewritten to that listener, and each DNS payload is forwarded to the configured upstream DNS server over TCP through the same proxy selection path.
+When DNS proxying is enabled, `graftcp` also starts an embedded UDP DNS listener. UDP `connect()` and `sendto()` calls to port 53 are rewritten to that listener, and each DNS payload is forwarded to the configured upstream DNS server over TCP through the same proxy selection path. DNS sockaddr rewrites are intentionally left in place after the syscall returns so resolvers such as musl, which validate replies against the send-side sockaddr buffer, continue to see the embedded DNS proxy as the expected peer.
 
 When generic UDP proxying is enabled, `graftcp` starts a separate UDP listener. UDP `connect()`, `sendto()`, and `sendmsg()` targets are rewritten to loopback token endpoints; the embedded listener maps each token back to the original destination and forwards packets through SOCKS5 UDP ASSOCIATE when SOCKS5 is selected, or direct UDP in `direct` mode and fallback cases.
 
@@ -127,9 +129,11 @@ When generic UDP proxying is enabled, `graftcp` starts a separate UDP listener. 
 - DNS proxying is disabled by default. Use `--enable-dns` to enable the UDP/53 DNS-over-TCP path, and `--dns-server` to choose the upstream server.
 - Generic UDP proxying is disabled by default. Use `--enable-udp` to enable it.
 - HTTP proxy mode does not support generic UDP. `auto` prefers SOCKS5 UDP when available and falls back to direct UDP if the SOCKS5 UDP association fails; `only_http_proxy` rejects generic UDP sessions.
+- SOCKS5 can use a TCP endpoint (`127.0.0.1:1080`) or a Unix socket endpoint (`unix:/path/tor.sock` or `/path/tor.sock`) for TCP CONNECT traffic. SOCKS5 UDP ASSOCIATE still requires a TCP SOCKS5 endpoint.
+- When neither `--socks5` nor `--http_proxy` is configured, graftcp falls back to SOCKS5 `127.0.0.1:1080`. Configuring any proxy disables this implicit default, so `--http_proxy` alone never dials a SOCKS5 endpoint.
 - DNS proxying has precedence over generic UDP for UDP/53 when both are enabled.
 - The proxy configuration file covers proxy endpoints and the common routing flags. CLI flags still override config values.
-- TCP and UDP syscall address buffers are restored after `connect()` / `sendto()` / `sendmsg()` returns on a best-effort basis; clients that require `recvfrom()` to report the original remote address may still not be fully transparent.
+- TCP and generic UDP syscall address buffers are restored after `connect()` / `sendto()` / `sendmsg()` returns on a best-effort basis; DNS proxy rewrites are kept in place for resolver source-address checks. Clients that require `recvfrom()` to report the original remote address may still not be fully transparent.
 - IPv6 is intentionally simplified to the IPv4-mapped loopback path; sockets that require `IPV6_V6ONLY=1` are out of scope by design.
 - Socket tracking is best-effort and keyed by traced pid/fd state. `dup*` and `fcntl(F_DUPFD*)` are copied best-effort, but `close_range()`, `unshare(CLONE_FILES)`, and full shared fd-table semantics are intentionally not modeled.
 - Loopback-token registrations are reclaimed on accept or by idle cleanup, not on every failed or abandoned connect.

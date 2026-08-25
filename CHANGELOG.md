@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Install the implicit SOCKS5 fallback `127.0.0.1:1080` only when no proxy at
+  all is configured. Previously configuring only `--http_proxy` still created
+  a SOCKS5 dialer pointing at the default address, which `auto` and `random`
+  mode could pick, and `only_socks5` validation silently passed. With only an
+  HTTP proxy configured, `only_socks5` now fails startup validation instead of
+  using the unintended endpoint. Supersedes the SOCKS5-fallback half of #93.
+
+## [v0.8.3] - 2026-07-15
+
+### Fixed
+
+- Build release packages with the requested target architecture instead of
+  silently falling back to the host compiler.
+- Verify the binary architecture before creating release packages.
+
+## [v0.8.2] - 2026-07-01
+
+### Added
+
+- SOCKS5 proxy endpoints can now use Unix sockets for TCP CONNECT traffic, for example `unix:/path/tor.sock`.
+
+### Fixed
+
+- Keep DNS proxy sockaddr rewrites in place after `sendto()` returns so musl-based resolvers can validate DNS replies when DNS proxying is enabled, fixing issue #90.
+
+## [v0.8.1] - 2026-06-07
+
+### Added
+
+- GitHub Actions release packaging for Linux `amd64`, `arm64`, `armv7`, and `386`.
+- Release assets now include `.deb`, `.rpm`, and `.tar.gz` packages plus SHA-256 checksums.
+
 ## [v0.8.0] - 2026-05-30
 
 ### Added

@@ -61,7 +61,8 @@ Usage: graftcp [-hn] [-b value] [--config value] [--disable-dns] [--disable-udp]
                     Set the mode for select a proxy [auto | random |
                     only_http_proxy | only_socks5 | direct] [auto]
      --socks5=value
-                    SOCKS5 address [127.0.0.1:1080]
+                    SOCKS5 address, e.g.: 127.0.0.1:1080 or unix:/path/tor.sock
+                    (default 127.0.0.1:1080 when no proxy is configured)
      --socks5_password=value
                     SOCKS5 password
      --socks5_username=value
@@ -78,6 +79,7 @@ Usage: graftcp [-hn] [-b value] [--config value] [--disable-dns] [--disable-udp]
 
 ```sh
 ./local/graftcp --socks5 127.0.0.1:1080 curl https://example.com
+./local/graftcp --select_proxy_mode only_socks5 --socks5 unix:/path/tor.sock curl https://example.com
 ./local/graftcp --enable-dns --dns-server 1.1.1.1:53 curl https://example.com
 ./local/graftcp --enable-udp --socks5 127.0.0.1:1080 your-udp-client
 ./local/graftcp --http_proxy 127.0.0.1:8080 git clone https://github.com/hmgle/graftcp.git
@@ -114,7 +116,7 @@ Usage: graftcp [-hn] [-b value] [--config value] [--disable-dns] [--disable-udp]
 
 对 IPv6 `connect(2)`，当前实现会改写为 IPv4-mapped Loopback 地址 `::ffff:127.x.y.z`，从而复用同一套 token 路由逻辑。
 
-启用 DNS 代理时，`graftcp` 还会启动一个内嵌 UDP DNS listener。目标端口为 53 的 UDP `connect()` 和 `sendto()` 会被改写到这个 listener，每个 DNS payload 再通过同一套 SOCKS5 / HTTP / direct 选择策略，以 TCP 方式转发到配置的上游 DNS 服务器。
+启用 DNS 代理时，`graftcp` 还会启动一个内嵌 UDP DNS listener。目标端口为 53 的 UDP `connect()` 和 `sendto()` 会被改写到这个 listener，每个 DNS payload 再通过同一套 SOCKS5 / HTTP / direct 选择策略，以 TCP 方式转发到配置的上游 DNS 服务器。DNS sockaddr 改写会在 syscall 返回后刻意保留，使 musl 这类会用发送侧 sockaddr 缓冲区校验响应来源的 resolver，继续把内嵌 DNS proxy 视为预期 peer。
 
 启用通用 UDP 代理时，`graftcp` 会启动另一个内嵌 UDP listener。UDP `connect()`、`sendto()` 和 `sendmsg()` 的目标地址会被改写成 loopback token endpoint；内嵌 listener 再把 token 映射回原始目标地址，并在选中 SOCKS5 时通过 SOCKS5 UDP ASSOCIATE 转发，或在 `direct` 模式和 fallback 场景下用 direct UDP 转发。
 
@@ -127,9 +129,11 @@ Usage: graftcp [-hn] [-b value] [--config value] [--disable-dns] [--disable-udp]
 - DNS 代理默认关闭；使用 `--enable-dns` 启用 UDP/53 DNS-over-TCP 路径，使用 `--dns-server` 指定上游服务器。
 - 通用 UDP 代理默认关闭；使用 `--enable-udp` 启用。
 - HTTP 代理模式不支持通用 UDP。`auto` 会优先尝试 SOCKS5 UDP，失败时回退 direct UDP；`only_http_proxy` 会拒绝通用 UDP session。
+- SOCKS5 可以使用 TCP endpoint（`127.0.0.1:1080`），也可以用 Unix socket endpoint（`unix:/path/tor.sock` 或 `/path/tor.sock`）承载 TCP CONNECT 流量。SOCKS5 UDP ASSOCIATE 仍然要求 TCP SOCKS5 endpoint。
+- 当 `--socks5` 和 `--http_proxy` 都没有配置时，graftcp 会回退到 SOCKS5 `127.0.0.1:1080`。只要配置了任意一个代理，这个隐含默认值就不再生效，因此单独使用 `--http_proxy` 时不会去连接任何 SOCKS5 endpoint。
 - 同时启用 DNS 和通用 UDP 时，UDP/53 优先走 DNS-over-TCP 路径。
 - 配置文件支持代理地址和常见路由选项；命令行参数仍然覆盖配置文件。
-- TCP 和 UDP syscall 地址缓冲区会在 `connect()` / `sendto()` / `sendmsg()` 返回后 best-effort 恢复；如果客户端强依赖 `recvfrom()` 返回原始远端地址，透明性仍可能不完整。
+- TCP 和通用 UDP syscall 地址缓冲区会在 `connect()` / `sendto()` / `sendmsg()` 返回后 best-effort 恢复；DNS proxy 改写会保留下来，以兼容 resolver 的来源地址校验。如果客户端强依赖 `recvfrom()` 返回原始远端地址，透明性仍可能不完整。
 - IPv6 故意统一走 IPv4-mapped loopback；依赖 `IPV6_V6ONLY=1` 的 socket 不在当前设计目标内。
 - socket 跟踪按被跟踪 pid/fd 状态做 best-effort；`dup*` 和 `fcntl(F_DUPFD*)` 会 best-effort 复制，但 `close_range()`、`unshare(CLONE_FILES)` 和完整共享 fd table 语义属于有意不覆盖的边界。
 - loopback token 会在本地 listener 成功 `accept()` 或空闲清理时回收，不保证覆盖每一个失败或放弃的连接。
